@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MathSlayer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@400;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      background: #0a0a18;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    canvas { display: block; }
+    /* Style the Phaser DOM container so it doesn't interfere with layout */
+    #phaser-game { position: relative; }
+  </style>
+</head>
+<body>
+  <!-- Game scripts (order matters — dependencies first) -->
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+  <script src="src/config.js"></script>
+  <script src="src/SpriteManager.js"></script>
+  <script src="src/MathEngine.js"></script>
+  <script src="src/EnemyManager.js"></script>
+  <script src="src/scenes/MenuScene.js"></script>
+  <script src="src/scenes/GameScene.js"></script>
+  <script src="src/scenes/GameOverScene.js"></script>
+
+  <script>
+    window.addEventListener('load', function () {
+      var game = new Phaser.Game({
+        type: Phaser.AUTO,
+        width:  CONFIG.GAME_WIDTH,
+        height: CONFIG.GAME_HEIGHT,
+        backgroundColor: '#0a0a18',
+        scale: {
+          mode:       Phaser.Scale.FIT,
+          autoCenter: Phaser.Scale.CENTER_BOTH,
+          min: { width: 800,  height: 500 },
+          max: { width: 1600, height: 1000 }
+        },
+        dom: { createContainer: true },
+        scene: [MenuScene, GameScene, GameOverScene]
+      });
+    });
+  </script>
+</body>
+</html>

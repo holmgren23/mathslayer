@@ -186,3 +186,174 @@ npx @claude-flow/cli@latest doctor --fix
 
 - Documentation: https://github.com/ruvnet/claude-flow
 - Issues: https://github.com/ruvnet/claude-flow/issues
+
+---
+
+# MathSlayer — Project Context
+
+> This section is for continuing development. Read this before touching any game file.
+
+## How to Run Locally
+
+```bash
+# From the mathslayer project root:
+npx serve .
+# Then open http://localhost:3000 in a browser.
+# Do NOT open index.html directly as file:// — browsers block asset loading under that protocol.
+```
+
+For GitHub Pages: push to `main` branch. The deploy workflow at `.github/workflows/deploy.yml` publishes automatically.
+
+---
+
+## File Structure
+
+```
+mathslayer/
+├── index.html                   # Entry point — loads Phaser CDN + all scripts in order
+├── sprites/                     # All sprite assets (see details below)
+│   ├── background.png
+│   ├── player_idle.png
+│   ├── player_walk.png
+│   ├── Slime_Medium_Green.png
+│   ├── Slime_Medium_Blue.png
+│   ├── Slime_Medium_Red.png
+│   ├── Slime_Medium_White.png
+│   ├── Slime_Small_Green.png    # Not yet used in game
+│   ├── Slime_Small_Blue.png     # Not yet used in game
+│   ├── Slime_Small_Red.png      # Not yet used in game
+│   └── Slime_Small_White.png    # Not yet used in game
+└── src/
+    ├── config.js                # Global CONFIG constants
+    ├── SpriteManager.js         # Asset loading, animation setup, sprite factories
+    ├── MathEngine.js            # Question generation and answer validation
+    ├── EnemyManager.js          # Slime spawning, movement, kill logic
+    └── scenes/
+        ├── MenuScene.js         # Main menu — op/difficulty selection, high score
+        ├── GameScene.js         # Core gameplay loop
+        └── GameOverScene.js     # End screen — score, high score, play again
+```
+
+---
+
+## What Each File Does
+
+### `src/config.js`
+Central constants. Key values:
+- `GAME_WIDTH: 800`, `GAME_HEIGHT: 500`
+- `PLAYER_X: 110`, `GROUND_Y: 305` — gameplay area top half
+- `PANEL_Y: 350`, `PANEL_HEIGHT: 150` — math panel bottom half
+- `PLAYER_HP: 5`
+- `DIFFICULTIES: { easy:{min:1,max:10}, medium:{min:1,max:25}, hard:{min:1,max:100} }`
+- Slime speed/scaling: `SLIME_BASE_SPEED:60`, `SLIME_SPEED_MAX:180`, increment every 12s
+- Spawn interval: starts at 3200ms, scales down to 900ms minimum
+- `MAX_SLIMES_START:1`, `MAX_SLIMES_CAP:6`, scales up every 5 correct answers
+
+### `src/SpriteManager.js`
+- `static preload(scene)` — loads all PNG assets, registers `loaderror`/`filecomplete`/`complete` listeners for diagnostics, calls `_createPlaceholders()` for projectile/heart textures
+- `static createAnimations(scene)` — creates named Phaser animations (guards with `anims.exists()` check to avoid duplication across scene restarts)
+- `static createPlayer(scene, x, y)` — returns sprite at scale 1.4 playing `player_idle_anim`
+- `static createSlime(scene, x, y, operation)` — returns sprite at scale 2.0 playing the correct color animation
+- `static checkAndShowErrors(scene)` — renders on-screen red panel listing any failed asset paths; call from `create()` in both MenuScene and GameScene
+- `static _createPlaceholders(scene)` — generates `projectile`, `heart`, `heart_empty` textures via Graphics (no PNG needed)
+
+### `src/MathEngine.js`
+- Constructor: `new MathEngine(operations[], difficulty)`
+- `generateQuestion()` — returns `{ question, answer, choices, operation }`, avoids repeating same string as last question
+- `generateBatch(n)` — returns array of n question objects, no consecutive repeats; used to pre-fill the question pool
+- `validate(userAnswer)` — compares against `currentQuestion.answer` (NOTE: GameScene uses direct comparison against `currentQ.answer` from the display queue, not this method)
+
+### `src/EnemyManager.js`
+- Constructor: `new EnemyManager(scene, getQuestion)` — `getQuestion` is a callback that returns a full question object (called at slime spawn time)
+- Each slime stores its question via `slime.setData('question', q)` and operation via `slime.setData('operation', op)`
+- `update(time, delta)` — moves slimes left; fires `slimeReachedPlayer` event when a slime reaches `PLAYER_X + 35`
+- `killSlime(slime, onComplete)` — scale+fade tween then particle burst, removes from active list
+- `getActiveSlimes()` — returns only alive+active slimes
+- `onCorrectAnswers(totalCorrect)` — scales `maxSimultaneousSlimes` and `spawnInterval` based on score
+
+### `src/scenes/MenuScene.js`
+- Shows background.png + dark overlay (depth 0/1), all UI at depth 2–4
+- Operation toggle buttons (+, -, ×, ÷) — minimum 1 always selected
+- Difficulty buttons (Easy/Medium/Hard)
+- High score from `localStorage.getItem('mathslayer_highscore')`
+- Start button → `this.scene.start('GameScene', { operations, difficulty })`
+- Calls `SpriteManager.checkAndShowErrors(this)` at end of `create()`
+
+### `src/scenes/GameScene.js`
+- **Background**: `background.png` cropped to `PANEL_Y` height (gameplay area only)
+- **Question pool**: pre-generated 12 questions at game start; refills to 12 when pool drops below 5
+- **Slime-question binding**: each slime pops `questionPool.shift()` at spawn → `slime.setData('question', q)`
+- **Display queue**: `_getDisplayQueue()` — combines active slime questions (sorted by x, closest first) with pool preview; always returns 3 items
+- **Math panel** (y=350–500): CURRENT question (large, center), NEXT (left preview), SOON (right preview), answer input (DOM element), 4 multiple-choice buttons
+- **Answer handling**: `_handleAnswer(value)` — validates against `_getDisplayQueue()[0].answer`; if correct, fires projectile at the slime owning that question (or removes from pool if no slime owns it yet); calls `_advanceQuestionDisplay()` for slide animation
+- **Score**: +100 per kill; high score saved to localStorage
+- Calls `SpriteManager.checkAndShowErrors(this)` at end of `create()`
+
+### `src/scenes/GameOverScene.js`
+- Shows final score, high score, correct answers, wave/slimes stats
+- "Play Again" reads last settings from localStorage
+- Uses procedural background (NOT background.png — not yet updated to use the sprite)
+
+---
+
+## Sprite Details
+
+| File | Dimensions | Frame size | Frames | Used for |
+|------|-----------|-----------|--------|---------|
+| `background.png` | any | — | — | Full-canvas BG in Menu + Game |
+| `player_idle.png` | 456×55 | 57×55 | 8 | `player_idle_anim` (fps 8, loop) |
+| `player_walk.png` | 180×348 | 60×58 | 18 | `player_walk_anim` (fps 10, loop) — loaded, not yet triggered |
+| `Slime_Medium_Green.png` | 128×128 | 32×32 | 16 (use 0–3) | `slime_green_anim` — Addition (+) |
+| `Slime_Medium_Blue.png` | 128×128 | 32×32 | 16 (use 0–3) | `slime_blue_anim` — Subtraction (−) |
+| `Slime_Medium_Red.png` | 128×128 | 32×32 | 16 (use 0–3) | `slime_red_anim` — Multiplication (×) |
+| `Slime_Medium_White.png` | 128×128 | 32×32 | 16 (use 0–3) | `slime_white_anim` — Division (÷) |
+| `Slime_Small_*.png` | 128×128 | 32×32 | 16 | Not yet used (reserved for future) |
+
+Slime display size: 32px × scale 2.0 = **64px** on screen.
+Player display size: scale 1.4 → ~80×77px on screen.
+
+---
+
+## Current State
+
+### Working
+- Full game loop: menu → gameplay → game over → play again
+- Operation and difficulty selection carried through to game
+- Slime spawning with correct color per operation
+- Question pool system: always 3 items visible (CURRENT / NEXT / SOON)
+- 1:1 slime-question binding — slime color matches the question shown
+- Multiple choice buttons + text input both work for answering
+- Projectile fires at owning slime on correct answer
+- Wrong answer flash feedback (red panel)
+- HP hearts (5 lives), damage on slime reaching player
+- Score scaling, high score in localStorage
+- Slime speed + spawn rate difficulty ramp over time
+- Asset load diagnostics: console errors + on-screen panel for missing files
+- GitHub Pages deploy workflow
+
+### Not Working / Known Issues
+1. **Sprites may still fail under `file://`** — must use `npx serve .` or a local HTTP server. The new diagnostics will at least show a clear error panel.
+2. **GameOverScene** still uses a procedural Graphics background — it does not use `background.png`. Needs updating to match Menu/Game scenes.
+3. **`player_walk_anim` never plays** — animation is loaded but GameScene never switches from idle to walk. Could be triggered during projectile firing or when slimes are near.
+4. **Small slime sprites unused** — `Slime_Small_*.png` files are present in `sprites/` but never loaded or used.
+5. **Answer input focus lost** — after clicking a multiple-choice button, the DOM input may lose focus and require a click to re-engage keyboard input.
+6. **No sound** — no audio of any kind.
+
+---
+
+## Planned Features
+
+### Boss Battle System (next priority)
+- Every N correct answers (e.g. every 10), spawn a boss slime instead of a regular slime
+- Boss uses a harder question (larger numbers or multi-step)
+- Boss requires multiple correct answers to kill (HP > 1), shown as a health bar above it
+- Boss uses a distinct sprite (could reuse a Slime_Large variant or scaled-up existing sprite)
+- On boss kill: score bonus + brief fanfare animation
+- Boss wave count tracked and displayed in HUD
+
+### Other Planned
+- Switch player to walk animation when firing
+- Sound effects (correct answer, wrong answer, slime death, player hit)
+- Combo multiplier for consecutive correct answers
+- Pause menu (Esc key)
+- Mobile touch support for answer buttons
