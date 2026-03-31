@@ -367,16 +367,18 @@ Boss slime display: scale `CONFIG.BOSS_SCALE` (0.96) → ~238px wide (3× regula
 
 ### Boss Battle System (IMPLEMENTED)
 - Every `CONFIG.BOSS_TRIGGER` (10) correct answers triggers a boss
+- On trigger: new slime spawning halts immediately (`bossSpawned` flag); "BOSS INCOMING..." pulses on screen while existing slimes are cleared
+- Boss only spawns after all regular slimes are defeated — no question conflicts possible
 - Boss is a LargeSlime (purple/red/grey random variant), 3× regular slime size (`BOSS_SCALE: 0.96`)
-- Boss moves at `BOSS_SPEED` (20px/s) — very slow
-- Boss has 5 HP shown as a magenta bar below the HUD (y=52)
-- Regular slimes stop spawning while boss is alive
+- Boss moves at `BOSS_SPEED` (12px/s) — 5× slower than base slime speed; walks in from the right edge naturally
+- Boss has 5 HP shown as a magenta bar below the HUD (y=52); bar is fully destroyed on defeat
+- All sprites face left (`setFlipX(true)`); boss question panel force-refreshed on spawn
 - Boss questions use **hard difficulty** numbers (`CONFIG.DIFFICULTIES.hard: min=1, max=100`) regardless of selected difficulty
-- Each correct answer deals 1 damage to boss; boss HP bar updates in real-time
-- **Boss entrance**: slides in from off-screen right (1200ms ease-out), screen darkens to 40% alpha, "BOSS APPEARED!" flashes
-- **Boss defeated**: particle explosion (20 particles, pink/yellow/white), "BOSS DEFEATED!" celebration text (400ms grow + 400ms fade), +500 score bonus, regular slimes resume
+- Each correct answer deals 1 damage to boss; a **new unique boss question** is generated for each hit (no repeats)
+- **Boss entrance**: fades in from off-screen right, "BOSS APPEARED!" flashes, screen darkens
+- **Boss defeated**: particle explosion (20 particles, pink/yellow/white), "BOSS DEFEATED!" celebration text, +500 score bonus, regular slimes resume
 - If boss reaches player: deals 2 HP damage, big red flash + camera shake + player hurt animation
-- `bossSpawned` flag prevents repeated boss triggers; reset on `EnemyManager.reset()`
+- `bossSpawned` resets to `false` inside `killBoss` so the next boss can trigger after 10 more correct answers
 
 ### Not Working / Known Issues
 1. **Sprites may still fail under `file://`** — must use `npx serve .` or a local HTTP server
