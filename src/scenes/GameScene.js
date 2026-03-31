@@ -18,11 +18,17 @@ class GameScene extends Phaser.Scene {
     this.score          = 0;
     this.correctAnswers = 0;
     this.gameOver       = false;
+    this.isPaused       = false;
     this.currentTarget  = null;
     this.projectiles    = [];
     this.inputDisabled  = false;
     this.domInput       = null;
     this.questionPool   = [];
+    this.bossActive     = false;
+    this.bossHP         = 0;
+    this.bossBar        = null;
+    this.wrongAttempts      = 0;
+    this.pauseOverlayObjects = [];
 
     SpriteManager.createAnimations(this);
 
@@ -39,13 +45,15 @@ class GameScene extends Phaser.Scene {
     // The slime's color reflects its question's operation.
     this.enemyManager = new EnemyManager(this, () => this._getNextSlimeQuestion());
     this.events.on('slimeReachedPlayer', this._onSlimeReachedPlayer, this);
+    this.events.on('bossTriggered',      this._onBossTriggered,      this);
+    this.events.on('bossReachedPlayer',   this._onBossReachedPlayer,   this);
 
     // ── Player ─────────────────────────────────────────────────────────────
     this.player = SpriteManager.createPlayer(
       this, CONFIG.PLAYER_X, CONFIG.GROUND_Y - 38
     );
     this.player.setDepth(10);
-    // Gentle idle float
+    // Gentle idle float (compatible with player idle animation)
     this.tweens.add({
       targets: this.player,
       y: CONFIG.GROUND_Y - 46,
@@ -70,10 +78,11 @@ class GameScene extends Phaser.Scene {
     });
 
     SpriteManager.checkAndShowErrors(this);
+    this._setupPauseKey();
   }
 
   update(time, delta) {
-    if (this.gameOver) return;
+    if (this.gameOver || this.isPaused) return;
     this.enemyManager.update(time, delta);
   }
 
@@ -110,6 +119,250 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5, 0).setDepth(25);
   }
 
+  _createBossBar() {
+    const barW = 300;
+    const barH = 18;
+    const bx   = CONFIG.GAME_WIDTH / 2 - barW / 2;
+    const by   = 52;
+
+    this.bossBar = { bx, by, barW, barH, hp: CONFIG.BOSS_HP };
+
+    const bg = this.add.graphics().setDepth(22);
+    bg.fillStyle(0x220033);
+    bg.fillRoundedRect(bx, by, barW, barH, 6);
+    bg.lineStyle(2, 0xff00ff);
+    bg.strokeRoundedRect(bx, by, barW, barH, 6);
+    this.bossBar.bg = bg;
+
+    const label = this.add.text(CONFIG.GAME_WIDTH / 2, by + 9, 'BOSS', {
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: '10px',
+      color: '#ff44ff'
+    }).setOrigin(0.5, 0.5).setDepth(23);
+    this.bossBar.label = label;
+
+    this.bossFill = this.add.graphics().setDepth(22);
+    this.bossBar.fill = this.bossFill;
+    this._drawBossFill(CONFIG.BOSS_HP);
+
+    const labelHP = this.add.text(CONFIG.GAME_WIDTH / 2, by + barH + 10, 'HP: ' + CONFIG.BOSS_HP + '/' + CONFIG.BOSS_HP, {
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: '11px',
+      color: '#ff88ff'
+    }).setOrigin(0.5, 0).setDepth(23);
+    this.bossBar.labelHP = labelHP;
+  }
+
+  _destroyBossBar() {
+    if (!this.bossBar) return;
+    ['bg', 'label', 'fill', 'labelHP'].forEach(key => {
+      if (this.bossBar[key] && this.bossBar[key].active) this.bossBar[key].destroy();
+    });
+    this.bossFill = null;
+    this.bossBar  = null;
+  }
+
+  _drawBossFill(hp) {
+    this.bossFill.clear();
+    if (hp <= 0) return;
+    const ratio = hp / CONFIG.BOSS_HP;
+    const fillW = this.bossBar.barW * ratio;
+    this.bossFill.fillStyle(0xff0066);
+    this.bossFill.fillRoundedRect(this.bossBar.bx + 2, this.bossBar.by + 2, fillW - 4, this.bossBar.barH - 4, 4);
+  }
+
+  _showBossAppeared(callback) {
+    // Darken screen
+    const overlay = this.add.graphics().setDepth(45);
+    overlay.fillStyle(0x000000, 0);
+    overlay.fillRect(0, 0, CONFIG.GAME_WIDTH, CONFIG.GAME_HEIGHT);
+    this.tweens.add({
+      targets: overlay,
+      alpha: 0.4,
+      duration: 600,
+      onComplete: () => overlay.destroy()
+    });
+
+    // Flash "BOSS APPEARED!" text
+    const text = this.add.text(CONFIG.GAME_WIDTH / 2, CONFIG.PANEL_Y / 2, 'BOSS APPEARED!', {
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: '36px',
+      color: '#ff0066',
+      stroke: '#ffffff',
+      strokeThickness: 4
+    }).setOrigin(0.5, 0.5).setDepth(50).setAlpha(0).setScale(0.5);
+
+    this.tweens.add({
+      targets: text,
+      alpha: 1,
+      scaleX: 1.2,
+      scaleY: 1.2,
+      duration: 400,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        this.tweens.add({
+          targets: text,
+          alpha: 0,
+          scaleX: 0.8,
+          scaleY: 0.8,
+          duration: 300,
+          delay: 600,
+          onComplete: () => text.destroy()
+        });
+      }
+    });
+
+    if (callback) this.time.delayedCall(1200, callback);
+  }
+
+  _showBossDefeated() {
+    // Explosion particles at boss position
+    if (this.enemyManager.bossSlime) {
+      this._emitKillParticles(this.enemyManager.bossSlime.x, this.enemyManager.bossSlime.y);
+    }
+
+    // "BOSS DEFEATED!" celebration
+    const text = this.add.text(CONFIG.GAME_WIDTH / 2, CONFIG.PANEL_Y / 2, 'BOSS DEFEATED!', {
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: '32px',
+      color: '#44ff88',
+      stroke: '#ffffff',
+      strokeThickness: 4
+    }).setOrigin(0.5, 0.5).setDepth(50).setAlpha(0).setScale(0.5);
+
+    this.tweens.add({
+      targets: text,
+      alpha: 1,
+      scaleX: 1.4,
+      scaleY: 1.4,
+      duration: 400,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        this.tweens.add({
+          targets: text,
+          alpha: 0,
+          duration: 400,
+          delay: 1000,
+          onComplete: () => text.destroy()
+        });
+      }
+    });
+
+    // Score bonus pop
+    this._showScorePop('+' + CONFIG.BOSS_SCORE_BONUS);
+  }
+
+  _onBossTriggered() {
+    const variants = ['purple', 'red', 'grey'];
+    this._bossVariant = variants[Math.floor(Math.random() * variants.length)];
+
+    // Show warning and wait for all existing slimes to be cleared first
+    this._showBossIncoming(() => {
+      this.bossActive = true;
+      this.bossHP     = CONFIG.BOSS_HP;
+      this._createBossBar();
+
+      this._showBossAppeared(() => {
+        this.enemyManager.spawnBoss(this._bossVariant, () => this.mathEngine.generateBossQuestion());
+        // Sync panel and state immediately after boss question is assigned
+        this.wrongAttempts = 0;
+        this._updateAttemptIndicator();
+        this.inputDisabled = false;
+        this._refreshQueueText();
+        if (this.domInput && this.domInput.node) this.domInput.node.focus();
+      });
+    });
+  }
+
+  _showBossIncoming(onCleared) {
+    const text = this.add.text(CONFIG.GAME_WIDTH / 2, CONFIG.PANEL_Y / 2, 'BOSS INCOMING...', {
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: '28px',
+      color: '#ff8800',
+      stroke: '#000000',
+      strokeThickness: 3
+    }).setOrigin(0.5, 0.5).setDepth(50).setAlpha(0);
+
+    this.tweens.add({
+      targets: text,
+      alpha: { from: 0.3, to: 1 },
+      duration: 500,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut'
+    });
+
+    const checkTimer = this.time.addEvent({
+      delay: 150,
+      loop: true,
+      callback: () => {
+        if (this.enemyManager.getActiveSlimes().length === 0) {
+          checkTimer.remove(false);
+          this.tweens.killTweensOf(text);
+          this.tweens.add({
+            targets: text,
+            alpha: 0,
+            duration: 200,
+            onComplete: () => {
+              text.destroy();
+              if (typeof onCleared === 'function') onCleared();
+            }
+          });
+        }
+      }
+    });
+  }
+
+  _onBossReachedPlayer() {
+    if (this.gameOver) return;
+
+    // Boss deals 2 HP damage
+    this.hp = Math.max(0, this.hp - 2);
+    this._updateHUD();
+
+    // Big red flash
+    const flash = this.add.graphics().setDepth(50);
+    flash.fillStyle(0xff0000, 0.45);
+    flash.fillRect(0, 0, CONFIG.GAME_WIDTH, CONFIG.GAME_HEIGHT);
+    this.tweens.add({
+      targets: flash,
+      alpha: 0,
+      duration: 600,
+      onComplete: () => flash.destroy()
+    });
+    this.cameras.main.shake(400, 0.012);
+
+    if (this.anims.exists('player_hurt_anim')) {
+      this.player.play('player_hurt_anim');
+      this.player.once('animationcomplete', () => {
+        if (!this.gameOver) this.player.play('player_idle_anim');
+      });
+    }
+
+    if (this.hp <= 0) {
+      this._triggerGameOver();
+      return;
+    }
+  }
+
+  _emitKillParticles(x, y) {
+    try {
+      const emitter = this.add.particles(x, y, 'projectile', {
+        speed: { min: 60, max: 200 },
+        scale: { start: 0.8, end: 0 },
+        alpha: { start: 1, end: 0 },
+        lifespan: 800,
+        tint: [0xff0066, 0xffee00, 0xff44ff, 0xffffff],
+        quantity: 20,
+        emitting: false
+      });
+      emitter.explode(20, x, y);
+      this.time.delayedCall(900, () => {
+        if (emitter && emitter.active) emitter.destroy();
+      });
+    } catch (e) { /* particles unavailable */ }
+  }
+
   _updateHUD() {
     this.heartSprites.forEach((h, i) => {
       h.setTexture(i < this.hp ? 'heart' : 'heart_empty');
@@ -142,6 +395,13 @@ class GameScene extends Phaser.Scene {
       stroke: '#110022',
       strokeThickness: 3
     }).setOrigin(0.5, 0.5).setDepth(25);
+
+    // Attempt indicator — top-right of question row
+    this.attemptIndicator = this.add.text(CONFIG.GAME_WIDTH - 16, pY + 22, '● ●', {
+      fontFamily: 'monospace',
+      fontSize: '16px',
+      color: '#44ff88'
+    }).setOrigin(1, 0.5).setDepth(25);
 
     // NEXT — left side, smaller
     this.qNextLabel = this.add.text(16, pY + 53, 'Next:', {
@@ -279,7 +539,7 @@ class GameScene extends Phaser.Scene {
   // Returns the 3 display items: first from active slimes (sorted by proximity),
   // then padded from the pool for the "upcoming" slots.
   _getDisplayQueue() {
-    const items = [];
+    let items = [];
     const slimes = this.enemyManager.getActiveSlimes()
       .filter(s => s.getData('question'))
       .sort((a, b) => a.x - b.x);
@@ -292,6 +552,15 @@ class GameScene extends Phaser.Scene {
     // Pad with pool questions
     for (let i = 0; items.length < 3 && i < this.questionPool.length; i++) {
       items.push(this.questionPool[i]);
+    }
+
+    // If boss is active, boss question takes first priority
+    if (this.bossActive) {
+      const boss = this.enemyManager.getBossSlime();
+      if (boss && boss.getData('question')) {
+        items.unshift(boss.getData('question'));
+        items = items.slice(0, 3);
+      }
     }
 
     return items;
@@ -374,6 +643,8 @@ class GameScene extends Phaser.Scene {
     // ── Correct answer ──────────────────────────────────────────────────────
     this.correctAnswers++;
     this.score += CONFIG.SCORE_PER_KILL;
+    this.wrongAttempts = 0;
+    this._updateAttemptIndicator();
     this._updateHUD();
     this.enemyManager.onCorrectAnswers(this.correctAnswers);
     this._showScorePop('+' + CONFIG.SCORE_PER_KILL);
@@ -385,10 +656,20 @@ class GameScene extends Phaser.Scene {
 
     // Consume the question from wherever it lives
     if (slimeOwner) {
-      // Slime carries this question — kill the slime
+      slimeOwner.setData('question', null);
       this.inputDisabled  = true;
       this.currentTarget  = slimeOwner;
       this._fireProjectile(slimeOwner);
+    } else if (this.bossActive) {
+      // Boss takes damage — handled in projectile onComplete
+      this.inputDisabled = true;
+      const boss = this.enemyManager.getBossSlime();
+      if (boss) {
+        this.currentTarget = boss;
+        this._fireProjectile(boss);
+      } else {
+        this.inputDisabled = false;
+      }
     } else {
       // Pool question (warm-up, before slimes or between slimes)
       const idx = this.questionPool.indexOf(currentQ);
@@ -423,52 +704,159 @@ class GameScene extends Phaser.Scene {
         this.projectiles = this.projectiles.filter(p => p !== proj);
         if (proj.active) proj.destroy();
 
-        if (target.active && target.getData('alive')) {
+        if (!target.active || !target.getData('alive')) {
+          this.inputDisabled = false;
+          this._refreshQueueText();
+          return;
+        }
+
+        if (target.getData('isBoss')) {
+          // Boss: deal 1 damage, update bar — only destroy when HP hits 0
+          const bossDead = this.enemyManager.damageBoss();
+          this.bossHP = this.enemyManager.bossSlime ? this.enemyManager.bossSlime.getData('hp') : 0;
+          this._drawBossFill(this.bossHP);
+          if (this.bossBar && this.bossBar.labelHP) {
+            this.bossBar.labelHP.setText('HP: ' + Math.max(0, this.bossHP) + '/' + CONFIG.BOSS_HP);
+          }
+          if (bossDead) {
+            this.score += CONFIG.BOSS_SCORE_BONUS;
+            this._updateHUD();
+            this._showBossDefeated();
+            this.enemyManager.killBoss(() => {
+              this._destroyBossBar();
+              this.bossActive = false;
+              this.bossHP = 0;
+              this.inputDisabled = false;
+              this._refreshQueueText();
+            });
+          } else {
+            // Boss survives — assign a new unique question for the next hit
+            const nextQ = this.mathEngine.generateBossQuestion();
+            if (this.enemyManager.bossSlime) {
+              this.enemyManager.bossSlime.setData('question', nextQ);
+            }
+            this.inputDisabled = false;
+            this._refreshQueueText();
+          }
+        } else {
+          // Regular slime
           this.enemyManager.killSlime(target, () => {
             this.inputDisabled = false;
+            this._refreshQueueText();
           });
-        } else {
-          this.inputDisabled = false;
         }
       }
     });
 
-    // Player attack squash
-    this.tweens.add({
-      targets: this.player,
-      scaleX: 1.15,
-      scaleY: 0.88,
-      duration: 90,
-      yoyo: true
-    });
+    // Player attack animation
+    if (this.anims.exists('player_attack_anim')) {
+      this.player.play('player_attack_anim');
+      this.player.once('animationcomplete', () => {
+        if (!this.gameOver) this.player.play('player_idle_anim');
+      });
+    }
   }
 
   _wrongAnswerFeedback() {
     const el = this.domInput && this.domInput.node;
     if (!el) return;
     el.value = '';
-    el.style.borderColor     = '#ff4444';
-    el.style.backgroundColor = '#330011';
 
-    let step = 0;
-    this.time.addEvent({
-      delay: 55,
-      repeat: 7,
-      callback: () => {
-        step++;
-        el.style.marginLeft = step % 2 === 0 ? '6px' : '-6px';
-        if (step >= 8) {
-          el.style.marginLeft      = '0px';
-          el.style.borderColor     = '#aa44ff';
-          el.style.backgroundColor = '#1a0033';
+    this.wrongAttempts++;
+
+    if (this.wrongAttempts === 1) {
+      // First wrong: shake + flash red, show warning, update indicator
+      el.style.borderColor     = '#ff8800';
+      el.style.backgroundColor = '#330011';
+      let step = 0;
+      this.time.addEvent({
+        delay: 55, repeat: 7,
+        callback: () => {
+          step++;
+          el.style.marginLeft = step % 2 === 0 ? '6px' : '-6px';
+          if (step >= 8) {
+            el.style.marginLeft      = '0px';
+            el.style.borderColor     = '#ff8800';
+            el.style.backgroundColor = '#1a0033';
+          }
         }
+      });
+
+      this._updateAttemptIndicator();
+
+      const warn = this.add.text(CONFIG.GAME_WIDTH / 2, CONFIG.PANEL_Y + 42,
+        '⚠ 1 ATTEMPT REMAINING!', {
+          fontFamily: 'Orbitron, sans-serif',
+          fontSize: '11px',
+          color: '#ff8800'
+        }).setOrigin(0.5, 0.5).setDepth(28).setAlpha(0);
+      this.tweens.add({
+        targets: warn, alpha: 1, duration: 200,
+        onComplete: () => {
+          this.tweens.add({
+            targets: warn, alpha: 0, duration: 300, delay: 1500,
+            onComplete: () => warn.destroy()
+          });
+        }
+      });
+
+    } else {
+      // Second wrong: lose 1 HP, hurt animation, screen flash, reset counter
+      this.wrongAttempts = 0;
+      this._updateAttemptIndicator();
+
+      el.style.borderColor     = '#ff0000';
+      el.style.backgroundColor = '#440000';
+      let step = 0;
+      this.time.addEvent({
+        delay: 55, repeat: 7,
+        callback: () => {
+          step++;
+          el.style.marginLeft = step % 2 === 0 ? '8px' : '-8px';
+          if (step >= 8) {
+            el.style.marginLeft      = '0px';
+            el.style.borderColor     = '#aa44ff';
+            el.style.backgroundColor = '#1a0033';
+          }
+        }
+      });
+
+      this.hp = Math.max(0, this.hp - 1);
+      this._updateHUD();
+
+      const flash = this.add.graphics().setDepth(50);
+      flash.fillStyle(0xff0000, 0.40);
+      flash.fillRect(0, 0, CONFIG.GAME_WIDTH, CONFIG.GAME_HEIGHT);
+      this.tweens.add({ targets: flash, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
+      this.cameras.main.shake(200, 0.009);
+
+      if (this.anims.exists('player_hurt_anim')) {
+        this.player.play('player_hurt_anim');
+        this.player.once('animationcomplete', () => {
+          if (!this.gameOver) this.player.play('player_idle_anim');
+        });
       }
-    });
+
+      if (this.hp <= 0) this._triggerGameOver();
+    }
+  }
+
+  _updateAttemptIndicator() {
+    if (!this.attemptIndicator) return;
+    if (this.wrongAttempts === 0) {
+      this.attemptIndicator.setText('● ●').setColor('#44ff88');
+    } else {
+      this.attemptIndicator.setText('● ○').setColor('#ff8800');
+    }
   }
 
   _onSlimeReachedPlayer() {
     if (this.gameOver) return;
+    // Don't damage player if boss is currently on screen (boss has separate handling)
+    if (this.enemyManager.getBossSlime()) return;
 
+    this.wrongAttempts = 0;
+    this._updateAttemptIndicator();
     this.hp = Math.max(0, this.hp - 1);
     this._updateHUD();
 
@@ -483,6 +871,14 @@ class GameScene extends Phaser.Scene {
       onComplete: () => flash.destroy()
     });
     this.cameras.main.shake(260, 0.008);
+
+    // Player hurt animation
+    if (this.anims.exists('player_hurt_anim')) {
+      this.player.play('player_hurt_anim');
+      this.player.once('animationcomplete', () => {
+        if (!this.gameOver) this.player.play('player_idle_anim');
+      });
+    }
 
     if (this.hp <= 0) {
       this._triggerGameOver();
@@ -532,8 +928,108 @@ class GameScene extends Phaser.Scene {
     });
   }
 
+  // ── Pause ────────────────────────────────────────────────────────────────────
+
+  _setupPauseKey() {
+    this.escKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+    this.escKey.on('down', () => {
+      if (this.gameOver) return;
+      if (this.isPaused) this._resumeGame();
+      else this._pauseGame();
+    });
+  }
+
+  _pauseGame() {
+    if (this.isPaused || this.gameOver) return;
+    this.isPaused = true;
+    this.time.paused = true;
+    this.tweens.pauseAll();
+    this._createPauseOverlay();
+  }
+
+  _resumeGame() {
+    if (!this.isPaused) return;
+    this.isPaused = false;
+    this.time.paused = false;
+    this.tweens.resumeAll();
+    this._destroyPauseOverlay();
+    if (this.domInput && this.domInput.node) this.domInput.node.focus();
+  }
+
+  _createPauseOverlay() {
+    const W = CONFIG.GAME_WIDTH, H = CONFIG.GAME_HEIGHT;
+
+    const overlay = this.add.graphics().setDepth(80);
+    overlay.fillStyle(0x000000, 0.65);
+    overlay.fillRect(0, 0, W, H);
+
+    const title = this.add.text(W / 2, H / 2 - 75, 'PAUSED', {
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: '44px',
+      color: '#ffffff',
+      stroke: '#aa44ff',
+      strokeThickness: 4
+    }).setOrigin(0.5, 0.5).setDepth(82);
+
+    const hint = this.add.text(W / 2, H / 2 + 118, 'Press ESC to resume', {
+      fontFamily: '"Exo 2", sans-serif',
+      fontSize: '13px',
+      color: '#887799'
+    }).setOrigin(0.5, 0.5).setDepth(82);
+
+    const resumeObjs = this._makePauseButton(W / 2, H / 2 - 10, 'RESUME', () => this._resumeGame());
+    const menuObjs   = this._makePauseButton(W / 2, H / 2 + 54, 'MAIN MENU', () => {
+      this._resumeGame();
+      if (this.domInput) this.domInput.destroy();
+      this.scene.start('MenuScene');
+    });
+
+    this.pauseOverlayObjects = [overlay, title, hint, ...resumeObjs, ...menuObjs];
+  }
+
+  _makePauseButton(x, y, label, onClick) {
+    const w = 190, h = 46;
+    const bg  = this.add.graphics().setDepth(82);
+    const txt = this.add.text(x, y, label, {
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: '16px',
+      color: '#ffffff'
+    }).setOrigin(0.5, 0.5).setDepth(84);
+
+    const drawNormal = () => {
+      bg.clear();
+      bg.fillStyle(0x330055);
+      bg.fillRoundedRect(x - w / 2, y - h / 2, w, h, 8);
+      bg.lineStyle(2, 0xaa44ff);
+      bg.strokeRoundedRect(x - w / 2, y - h / 2, w, h, 8);
+    };
+    const drawHover = () => {
+      bg.clear();
+      bg.fillStyle(0x550088);
+      bg.fillRoundedRect(x - w / 2, y - h / 2, w, h, 8);
+      bg.lineStyle(2, 0xdd88ff);
+      bg.strokeRoundedRect(x - w / 2, y - h / 2, w, h, 8);
+    };
+
+    drawNormal();
+    const zone = this.add.zone(x, y, w, h).setInteractive().setDepth(85);
+    zone.on('pointerover', drawHover);
+    zone.on('pointerout',  drawNormal);
+    zone.on('pointerdown', onClick);
+
+    return [bg, txt, zone];
+  }
+
+  _destroyPauseOverlay() {
+    this.pauseOverlayObjects.forEach(obj => { if (obj && obj.active) obj.destroy(); });
+    this.pauseOverlayObjects = [];
+  }
+
   shutdown() {
     this.events.off('slimeReachedPlayer', this._onSlimeReachedPlayer, this);
+    this.events.off('bossTriggered',      this._onBossTriggered,      this);
+    this.events.off('bossReachedPlayer',   this._onBossReachedPlayer,   this);
+    if (this.escKey) this.escKey.removeAllListeners();
     if (this.domInput) this.domInput.destroy();
     this.projectiles.forEach(p => { if (p && p.active) p.destroy(); });
     this.projectiles = [];

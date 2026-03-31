@@ -119,5 +119,14 @@ class MathEngine {
     return !isNaN(parsed) && parsed === this.currentQuestion.answer;
   }
 
+  // Generate a boss question using hard difficulty regardless of selected difficulty
+  generateBossQuestion() {
+    const savedDifficulty = this.difficulty;
+    this.difficulty = 'hard';
+    const q = this.generateQuestion();
+    this.difficulty = savedDifficulty;
+    return q;
+  }
+
   getCurrentQuestion() { return this.currentQuestion; }
 }

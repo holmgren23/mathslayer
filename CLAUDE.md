@@ -211,26 +211,29 @@ For GitHub Pages: push to `main` branch. The deploy workflow at `.github/workflo
 ```
 mathslayer/
 ├── index.html                   # Entry point — loads Phaser CDN + all scripts in order
-├── sprites/                     # All sprite assets (see details below)
+├── sprites/                     # All sprite assets (see Sprite Details table below)
 │   ├── background.png
-│   ├── player_idle.png
-│   ├── player_walk.png
-│   ├── Slime_Medium_Green.png
-│   ├── Slime_Medium_Blue.png
-│   ├── Slime_Medium_Red.png
-│   ├── Slime_Medium_White.png
-│   ├── Slime_Small_Green.png    # Not yet used in game
-│   ├── Slime_Small_Blue.png     # Not yet used in game
-│   ├── Slime_Small_Red.png      # Not yet used in game
-│   └── Slime_Small_White.png    # Not yet used in game
+│   ├── player_idle.png          # 10-frame samurai idle
+│   ├── player_attack.png        # 7-frame samurai attack
+│   ├── player_run.png           # 16-frame samurai run
+│   ├── player_hurt.png          # 4-frame samurai hurt
+│   ├── SmallSlime_Green.png     # 5-col grid, Addition (+)
+│   ├── SmallSlime_Pink.png      # 5-col grid, Subtraction (−) / Division (÷)
+│   ├── SmallSlime_Violet.png    # 5-col grid, Multiplication (×)
+│   ├── MediumSlime_Blue.png     # 5-col grid, wave 3+
+│   ├── MediumSlime_Orange.png   # 5-col grid, wave 3+
+│   ├── MediumSlime_Yellow.png   # 5-col grid, wave 3+
+│   ├── LargeSlime_Purple.png    # 5-col grid, boss
+│   ├── LargeSlime_Red.png       # 5-col grid, boss
+│   └── LargeSlime_Grey.png      # 5-col grid, boss
 └── src/
-    ├── config.js                # Global CONFIG constants
-    ├── SpriteManager.js         # Asset loading, animation setup, sprite factories
-    ├── MathEngine.js            # Question generation and answer validation
-    ├── EnemyManager.js          # Slime spawning, movement, kill logic
+    ├── config.js                # Global CONFIG constants (incl. boss settings)
+    ├── SpriteManager.js         # Asset loading, animations, sprite factories
+    ├── MathEngine.js            # Question generation, boss question helper
+    ├── EnemyManager.js          # Slime spawning, movement, boss lifecycle
     └── scenes/
         ├── MenuScene.js         # Main menu — op/difficulty selection, high score
-        ├── GameScene.js         # Core gameplay loop
+        ├── GameScene.js         # Core gameplay loop, boss battle logic
         └── GameOverScene.js     # End screen — score, high score, play again
 ```
 
@@ -248,28 +251,38 @@ Central constants. Key values:
 - Slime speed/scaling: `SLIME_BASE_SPEED:60`, `SLIME_SPEED_MAX:180`, increment every 12s
 - Spawn interval: starts at 3200ms, scales down to 900ms minimum
 - `MAX_SLIMES_START:1`, `MAX_SLIMES_CAP:6`, scales up every 5 correct answers
+- `BOSS_TRIGGER:10` — every 10 correct answers triggers boss
+- `BOSS_HP:5`, `BOSS_SPEED:12`, `BOSS_SCALE:0.96`, `BOSS_SCORE_BONUS:500`
 
 ### `src/SpriteManager.js`
-- `static preload(scene)` — loads all PNG assets, registers `loaderror`/`filecomplete`/`complete` listeners for diagnostics, calls `_createPlaceholders()` for projectile/heart textures
-- `static createAnimations(scene)` — creates named Phaser animations (guards with `anims.exists()` check to avoid duplication across scene restarts)
-- `static createPlayer(scene, x, y)` — returns sprite at scale 1.4 playing `player_idle_anim`
-- `static createSlime(scene, x, y, operation)` — returns sprite at scale 2.0 playing the correct color animation
-- `static checkAndShowErrors(scene)` — renders on-screen red panel listing any failed asset paths; call from `create()` in both MenuScene and GameScene
-- `static _createPlaceholders(scene)` — generates `projectile`, `heart`, `heart_empty` textures via Graphics (no PNG needed)
+- `static preload(scene)` — loads all PNG assets, registers load diagnostics, calls `_createPlaceholders()`
+- `static createAnimations(scene)` — creates all player and slime animations with `anims.exists()` guards
+- `static createPlayer(scene, x, y)` — scale 0.9, plays `player_idle_anim` by default
+- `static createSlime(scene, x, y, operation, wave)` — wave-aware: regular slimes wave 1–2, mid-wave slimes wave 3+; calls `addBounceToSlime()`
+- `static createBossSlime(scene, x, y, variant)` — boss at `CONFIG.BOSS_SCALE`, calls `addBounceToSlime()`
+- `static addBounceToSlime(slime, scene, baseY)` — gentle sine bounce tween (700ms, 10px amplitude, infinite yoyo)
+- `static checkAndShowErrors(scene)` — renders on-screen red panel for failed assets
+- `static _detectSlimeFrameSize(sheetW, sheetH)` — auto-detects frame size for 1240×1860 sheets via common column counts (5→4→3→2)
+- `static _createPlaceholders(scene)` — generates `projectile`, `heart`, `heart_empty` textures via Graphics
 
 ### `src/MathEngine.js`
 - Constructor: `new MathEngine(operations[], difficulty)`
 - `generateQuestion()` — returns `{ question, answer, choices, operation }`, avoids repeating same string as last question
-- `generateBatch(n)` — returns array of n question objects, no consecutive repeats; used to pre-fill the question pool
-- `validate(userAnswer)` — compares against `currentQuestion.answer` (NOTE: GameScene uses direct comparison against `currentQ.answer` from the display queue, not this method)
+- `generateBatch(n)` — returns array of n question objects, no consecutive repeats
+- `generateBossQuestion()` — generates a question using hard difficulty regardless of selected difficulty; restores original after
+- `validate(userAnswer)` — compares against `currentQuestion.answer`
 
 ### `src/EnemyManager.js`
-- Constructor: `new EnemyManager(scene, getQuestion)` — `getQuestion` is a callback that returns a full question object (called at slime spawn time)
-- Each slime stores its question via `slime.setData('question', q)` and operation via `slime.setData('operation', op)`
-- `update(time, delta)` — moves slimes left; fires `slimeReachedPlayer` event when a slime reaches `PLAYER_X + 35`
-- `killSlime(slime, onComplete)` — scale+fade tween then particle burst, removes from active list
-- `getActiveSlimes()` — returns only alive+active slimes
-- `onCorrectAnswers(totalCorrect)` — scales `maxSimultaneousSlimes` and `spawnInterval` based on score
+- Constructor: `new EnemyManager(scene, getQuestion)`
+- `spawnBoss(variant, getBossQuestion)` — dramatic entrance tween from off-screen right, `isBoss` data flag, `hp: CONFIG.BOSS_HP`
+- `damageBoss()` — decrements boss HP by 1, returns `true` when HP reaches 0
+- `killBoss(onComplete)` — scale+alpha death tween, particle burst, clears `bossSlime`
+- `update(time, delta)` — moves slimes and boss independently; boss at `BOSS_SPEED`
+- `getActiveSlimes()` — returns alive, active slimes only
+- `getBossSlime()` — returns active boss or null
+- `_spawnSlime()` — skips spawning if boss is alive
+- `reset()` — clears `bossSpawned` flag and `bossSlime`
+- `onCorrectAnswers(totalCorrect)` — checks `BOSS_TRIGGER` threshold, emits `bossTriggered` event
 
 ### `src/scenes/MenuScene.js`
 - Shows background.png + dark overlay (depth 0/1), all UI at depth 2–4
@@ -283,11 +296,12 @@ Central constants. Key values:
 - **Background**: `background.png` cropped to `PANEL_Y` height (gameplay area only)
 - **Question pool**: pre-generated 12 questions at game start; refills to 12 when pool drops below 5
 - **Slime-question binding**: each slime pops `questionPool.shift()` at spawn → `slime.setData('question', q)`
-- **Display queue**: `_getDisplayQueue()` — combines active slime questions (sorted by x, closest first) with pool preview; always returns 3 items
+- **Display queue**: `_getDisplayQueue()` — boss question takes first priority when boss is active; then active slime questions sorted by x; then pool preview. Always 3 items.
 - **Math panel** (y=350–500): CURRENT question (large, center), NEXT (left preview), SOON (right preview), answer input (DOM element), 4 multiple-choice buttons
-- **Answer handling**: `_handleAnswer(value)` — validates against `_getDisplayQueue()[0].answer`; if correct, fires projectile at the slime owning that question (or removes from pool if no slime owns it yet); calls `_advanceQuestionDisplay()` for slide animation
-- **Score**: +100 per kill; high score saved to localStorage
-- Calls `SpriteManager.checkAndShowErrors(this)` at end of `create()`
+- **Answer handling**: `_handleAnswer(value)` — validates against `_getDisplayQueue()[0].answer`; if correct, fires projectile; boss takes 1 damage per correct answer
+- **Boss battle**: `_onBossTriggered()` → `_showBossAppeared()` (darken + text) → `EnemyManager.spawnBoss()`; boss HP bar at y=52; `_showBossDefeated()` on kill with particle explosion + celebration text + +500 score
+- **Score**: +100 per kill; +500 boss bonus; high score saved to localStorage
+- Player animations: `player_attack_anim` plays on projectile fire; `player_hurt_anim` plays on damage
 
 ### `src/scenes/GameOverScene.js`
 - Shows final score, high score, correct answers, wave/slimes stats
@@ -296,21 +310,39 @@ Central constants. Key values:
 
 ---
 
+---
+
 ## Sprite Details
 
-| File | Dimensions | Frame size | Frames | Used for |
-|------|-----------|-----------|--------|---------|
-| `background.png` | any | — | — | Full-canvas BG in Menu + Game |
-| `player_idle.png` | 456×55 | 57×55 | 8 | `player_idle_anim` (fps 8, loop) |
-| `player_walk.png` | 180×348 | 60×58 | 18 | `player_walk_anim` (fps 10, loop) — loaded, not yet triggered |
-| `Slime_Medium_Green.png` | 128×128 | 32×32 | 16 (use 0–3) | `slime_green_anim` — Addition (+) |
-| `Slime_Medium_Blue.png` | 128×128 | 32×32 | 16 (use 0–3) | `slime_blue_anim` — Subtraction (−) |
-| `Slime_Medium_Red.png` | 128×128 | 32×32 | 16 (use 0–3) | `slime_red_anim` — Multiplication (×) |
-| `Slime_Medium_White.png` | 128×128 | 32×32 | 16 (use 0–3) | `slime_white_anim` — Division (÷) |
-| `Slime_Small_*.png` | 128×128 | 32×32 | 16 | Not yet used (reserved for future) |
+All sprite sheets are auto-detected where applicable. Frame size detection for 1240×1860 slime sheets tries column counts 5→4→3→2, confirming rows divide evenly.
 
-Slime display size: 32px × scale 2.0 = **64px** on screen.
-Player display size: scale 1.4 → ~80×77px on screen.
+### Player Sprites (Samurai pixel art — horizontal strips, 96px per frame)
+
+| File | Dimensions | Frames | Animation | Notes |
+|------|-----------|--------|-----------|-------|
+| `player_idle.png` | 960×96 | 10 | `player_idle_anim` (fps 8, loop) | Default/idle state |
+| `player_attack.png` | 672×96 | 7 | `player_attack_anim` (fps 10, once) | Plays on slime kill |
+| `player_run.png` | 1536×96 | 16 | `player_run_anim` (fps 12, loop) | Available for future use |
+| `player_hurt.png` | 384×96 | 4 | `player_hurt_anim` (fps 6, once) | Plays on player damage |
+
+Player display: scale 0.9 → ~86×86px on screen.
+
+### Slime Sprites (all sheets 1240×1860px, 5-column grid → 248×372px frames, use frames 0–3)
+
+| File | Sprite Key | Animation | Used for |
+|------|-----------|-----------|---------|
+| `SmallSlime_Green.png` | `small_green` | `small_green_anim` | Regular slime, Addition (+) |
+| `SmallSlime_Pink.png` | `small_pink` | `small_pink_anim` | Regular slime, Subtraction (−) and Division (÷) |
+| `SmallSlime_Violet.png` | `small_violet` | `small_violet_anim` | Regular slime, Multiplication (×) |
+| `MediumSlime_Blue.png` | `medium_blue` | `medium_blue_anim` | Mid-wave slime (wave 3+), cycles with operation |
+| `MediumSlime_Orange.png` | `medium_orange` | `medium_orange_anim` | Mid-wave slime (wave 3+) |
+| `MediumSlime_Yellow.png` | `medium_yellow` | `medium_yellow_anim` | Mid-wave slime (wave 3+) |
+| `LargeSlime_Purple.png` | `large_purple` | `large_purple_anim` | Boss slime variant |
+| `LargeSlime_Red.png` | `large_red` | `large_red_anim` | Boss slime variant |
+| `LargeSlime_Grey.png` | `large_grey` | `large_grey_anim` | Boss slime variant |
+
+Regular slime display: scale 0.32 → ~79px wide.
+Boss slime display: scale `CONFIG.BOSS_SCALE` (0.96) → ~238px wide (3× regular).
 
 ---
 
@@ -319,41 +351,47 @@ Player display size: scale 1.4 → ~80×77px on screen.
 ### Working
 - Full game loop: menu → gameplay → game over → play again
 - Operation and difficulty selection carried through to game
-- Slime spawning with correct color per operation
+- Slime spawning — wave-aware: regular slimes (wave 1–2), mid-wave slimes (wave 3+)
 - Question pool system: always 3 items visible (CURRENT / NEXT / SOON)
 - 1:1 slime-question binding — slime color matches the question shown
 - Multiple choice buttons + text input both work for answering
 - Projectile fires at owning slime on correct answer
-- Wrong answer flash feedback (red panel)
-- HP hearts (5 lives), damage on slime reaching player
+- Wrong answer punishment — 2-attempt system: first wrong shakes + shows warning; second wrong loses 1 HP + hurt animation + red flash; attempt counter (●●/●○) shown in question panel
+- HP hearts (5 lives), damage on slime reaching player (1 HP per slime, 2 HP per boss)
+- **ESC pause menu** — overlay with Resume and Main Menu buttons; pauses all movement and timers; ESC toggles
 - Score scaling, high score in localStorage
 - Slime speed + spawn rate difficulty ramp over time
 - Asset load diagnostics: console errors + on-screen panel for missing files
 - GitHub Pages deploy workflow
+- **Boss battle system** — fully implemented (see below)
+
+### Boss Battle System (IMPLEMENTED)
+- Every `CONFIG.BOSS_TRIGGER` (10) correct answers triggers a boss
+- Boss is a LargeSlime (purple/red/grey random variant), 3× regular slime size (`BOSS_SCALE: 0.96`)
+- Boss moves at `BOSS_SPEED` (20px/s) — very slow
+- Boss has 5 HP shown as a magenta bar below the HUD (y=52)
+- Regular slimes stop spawning while boss is alive
+- Boss questions use **hard difficulty** numbers (`CONFIG.DIFFICULTIES.hard: min=1, max=100`) regardless of selected difficulty
+- Each correct answer deals 1 damage to boss; boss HP bar updates in real-time
+- **Boss entrance**: slides in from off-screen right (1200ms ease-out), screen darkens to 40% alpha, "BOSS APPEARED!" flashes
+- **Boss defeated**: particle explosion (20 particles, pink/yellow/white), "BOSS DEFEATED!" celebration text (400ms grow + 400ms fade), +500 score bonus, regular slimes resume
+- If boss reaches player: deals 2 HP damage, big red flash + camera shake + player hurt animation
+- `bossSpawned` flag prevents repeated boss triggers; reset on `EnemyManager.reset()`
 
 ### Not Working / Known Issues
-1. **Sprites may still fail under `file://`** — must use `npx serve .` or a local HTTP server. The new diagnostics will at least show a clear error panel.
-2. **GameOverScene** still uses a procedural Graphics background — it does not use `background.png`. Needs updating to match Menu/Game scenes.
-3. **`player_walk_anim` never plays** — animation is loaded but GameScene never switches from idle to walk. Could be triggered during projectile firing or when slimes are near.
-4. **Small slime sprites unused** — `Slime_Small_*.png` files are present in `sprites/` but never loaded or used.
-5. **Answer input focus lost** — after clicking a multiple-choice button, the DOM input may lose focus and require a click to re-engage keyboard input.
-6. **No sound** — no audio of any kind.
+1. **Sprites may still fail under `file://`** — must use `npx serve .` or a local HTTP server
+2. **GameOverScene** still uses a procedural Graphics background — not yet updated to use `background.png`
+3. **`player_run_anim` loaded but never triggered** — reserved for future use (e.g. player movement)
+4. **Answer input focus lost** — after clicking a multiple-choice button, DOM input may lose focus
+5. **No sound** — no audio of any kind
 
 ---
 
 ## Planned Features
 
-### Boss Battle System (next priority)
-- Every N correct answers (e.g. every 10), spawn a boss slime instead of a regular slime
-- Boss uses a harder question (larger numbers or multi-step)
-- Boss requires multiple correct answers to kill (HP > 1), shown as a health bar above it
-- Boss uses a distinct sprite (could reuse a Slime_Large variant or scaled-up existing sprite)
-- On boss kill: score bonus + brief fanfare animation
-- Boss wave count tracked and displayed in HUD
-
 ### Other Planned
-- Switch player to walk animation when firing
-- Sound effects (correct answer, wrong answer, slime death, player hit)
+- Switch player to walk/run animation when firing
+- Sound effects (correct answer, wrong answer, slime death, player hit, boss battle)
 - Combo multiplier for consecutive correct answers
-- Pause menu (Esc key)
 - Mobile touch support for answer buttons
+- Wave counter that persists through boss fights (currently resets per `SLIMES_SCALE_THRESHOLD`)

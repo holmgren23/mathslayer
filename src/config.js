@@ -28,6 +28,13 @@ const CONFIG = {
   PROJECTILE_SPEED: 520,
   SCORE_PER_KILL:   100,
 
+  // Boss battle
+  BOSS_TRIGGER:       10,   // every N correct answers
+  BOSS_HP:            5,
+  BOSS_SPEED:         12,   // very slow (5× slower than base slime speed)
+  BOSS_SCALE:        0.96,  // 3x regular slime scale (0.32)
+  BOSS_SCORE_BONUS:  500,
+
   COLORS: {
     PLAYER:       0x4488ff,
     SLIME:        0x44cc44,

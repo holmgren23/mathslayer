@@ -5,8 +5,13 @@ class SpriteManager {
     SpriteManager._loadedAssets = 0;
     SpriteManager._expectedKeys = [
       'background',
-      'player_idle', 'player_walk',
-      'slime_green', 'slime_blue', 'slime_red', 'slime_white'
+      'player_idle', 'player_attack', 'player_run', 'player_hurt',
+      // Regular slimes
+      'small_green', 'small_pink', 'small_violet',
+      // Mid-wave slimes
+      'medium_blue', 'medium_orange', 'medium_yellow',
+      // Boss slimes
+      'large_purple', 'large_red', 'large_grey'
     ];
 
     scene.load.on('loaderror', (file) => {
@@ -33,21 +38,29 @@ class SpriteManager {
 
     scene.load.image('background', 'sprites/background.png');
 
-    // Player spritesheets
-    scene.load.spritesheet('player_idle', 'sprites/player_idle.png', {
-      frameWidth: 57, frameHeight: 55
-    });
-    scene.load.spritesheet('player_walk', 'sprites/player_walk.png', {
-      frameWidth: 60, frameHeight: 58
-    });
+    // New samurai player spritesheets — 96px per frame, all horizontal strips
+    scene.load.spritesheet('player_idle',   'sprites/player_idle.png',   { frameWidth: 96, frameHeight: 96 });
+    scene.load.spritesheet('player_attack', 'sprites/player_attack.png', { frameWidth: 96, frameHeight: 96 });
+    scene.load.spritesheet('player_run',     'sprites/player_run.png',    { frameWidth: 96, frameHeight: 96 });
+    scene.load.spritesheet('player_hurt',    'sprites/player_hurt.png',   { frameWidth: 96, frameHeight: 96 });
 
-    // Operation-specific slime spritesheets (128×128, 4×4 grid = 16 frames of 32×32)
-    scene.load.spritesheet('slime_green', 'sprites/Slime_Medium_Green.png', { frameWidth: 32, frameHeight: 32 });
-    scene.load.spritesheet('slime_blue',  'sprites/Slime_Medium_Blue.png',  { frameWidth: 32, frameHeight: 32 });
-    scene.load.spritesheet('slime_red',   'sprites/Slime_Medium_Red.png',   { frameWidth: 32, frameHeight: 32 });
-    scene.load.spritesheet('slime_white', 'sprites/Slime_Medium_White.png', { frameWidth: 32, frameHeight: 32 });
+    // All slime sheets are 1240×1860px — auto-detect frame size via common grid columns
+    const slimeSheetW = 1240, slimeSheetH = 1860;
+    const slimeFrame  = SpriteManager._detectSlimeFrameSize(slimeSheetW, slimeSheetH);
 
-    // Placeholder textures for elements with no sprite file
+    // Regular slimes (wave 1-2)
+    scene.load.spritesheet('small_green',   'sprites/SmallSlime_Green.png',   { frameWidth: slimeFrame.w, frameHeight: slimeFrame.h });
+    scene.load.spritesheet('small_pink',    'sprites/SmallSlime_Pink.png',    { frameWidth: slimeFrame.w, frameHeight: slimeFrame.h });
+    scene.load.spritesheet('small_violet',  'sprites/SmallSlime_Violet.png',  { frameWidth: slimeFrame.w, frameHeight: slimeFrame.h });
+    // Mid-wave slimes (wave 3+)
+    scene.load.spritesheet('medium_blue',   'sprites/MediumSlime_Blue.png',   { frameWidth: slimeFrame.w, frameHeight: slimeFrame.h });
+    scene.load.spritesheet('medium_orange', 'sprites/MediumSlime_Orange.png', { frameWidth: slimeFrame.w, frameHeight: slimeFrame.h });
+    scene.load.spritesheet('medium_yellow', 'sprites/MediumSlime_Yellow.png', { frameWidth: slimeFrame.w, frameHeight: slimeFrame.h });
+    // Boss slimes
+    scene.load.spritesheet('large_purple',  'sprites/LargeSlime_Purple.png',  { frameWidth: slimeFrame.w, frameHeight: slimeFrame.h });
+    scene.load.spritesheet('large_red',     'sprites/LargeSlime_Red.png',      { frameWidth: slimeFrame.w, frameHeight: slimeFrame.h });
+    scene.load.spritesheet('large_grey',    'sprites/LargeSlime_Grey.png',     { frameWidth: slimeFrame.w, frameHeight: slimeFrame.h });
+
     SpriteManager._createPlaceholders(scene);
   }
 
@@ -85,22 +98,42 @@ class SpriteManager {
   static createAnimations(scene) {
     const a = scene.anims;
 
+    // New samurai player animations
     if (!a.exists('player_idle_anim')) {
       a.create({ key: 'player_idle_anim',
-        frames: a.generateFrameNumbers('player_idle', { start: 0, end: 7 }),
+        frames: a.generateFrameNumbers('player_idle', { start: 0, end: 9 }),
         frameRate: 8, repeat: -1 });
     }
-    if (!a.exists('player_walk_anim')) {
-      a.create({ key: 'player_walk_anim',
-        frames: a.generateFrameNumbers('player_walk', { start: 0, end: 17 }),
-        frameRate: 10, repeat: -1 });
+    if (!a.exists('player_attack_anim')) {
+      a.create({ key: 'player_attack_anim',
+        frames: a.generateFrameNumbers('player_attack', { start: 0, end: 6 }),
+        frameRate: 10, repeat: 0 });
+    }
+    if (!a.exists('player_run_anim')) {
+      a.create({ key: 'player_run_anim',
+        frames: a.generateFrameNumbers('player_run', { start: 0, end: 15 }),
+        frameRate: 12, repeat: -1 });
+    }
+    if (!a.exists('player_hurt_anim')) {
+      a.create({ key: 'player_hurt_anim',
+        frames: a.generateFrameNumbers('player_hurt', { start: 0, end: 3 }),
+        frameRate: 6, repeat: 0 });
     }
 
+    // New slime animations — use first 4 frames of each sheet
     const slimes = [
-      { key: 'slime_green', anim: 'slime_green_anim' },
-      { key: 'slime_blue',  anim: 'slime_blue_anim'  },
-      { key: 'slime_red',   anim: 'slime_red_anim'   },
-      { key: 'slime_white', anim: 'slime_white_anim' }
+      // Regular
+      { key: 'small_green',   anim: 'small_green_anim'   },
+      { key: 'small_pink',    anim: 'small_pink_anim'    },
+      { key: 'small_violet',  anim: 'small_violet_anim'  },
+      // Mid-wave
+      { key: 'medium_blue',   anim: 'medium_blue_anim'   },
+      { key: 'medium_orange', anim: 'medium_orange_anim' },
+      { key: 'medium_yellow', anim: 'medium_yellow_anim' },
+      // Boss
+      { key: 'large_purple',  anim: 'large_purple_anim' },
+      { key: 'large_red',     anim: 'large_red_anim'     },
+      { key: 'large_grey',    anim: 'large_grey_anim'    }
     ];
     slimes.forEach(({ key, anim }) => {
       if (!a.exists(anim)) {
@@ -114,17 +147,43 @@ class SpriteManager {
   // ── Sprite factories ─────────────────────────────────────────────────────────
   static createPlayer(scene, x, y) {
     const sp = scene.add.sprite(x, y, 'player_idle');
-    sp.setScale(1.4);
+    sp.setScale(2.5);
     if (scene.anims.exists('player_idle_anim')) sp.play('player_idle_anim');
     return sp;
   }
 
-  static createSlime(scene, x, y, operation) {
-    const key  = SpriteManager._slimeKey(operation);
-    const anim = SpriteManager._slimeAnim(operation);
+  static addBounceToSlime(slime, scene, baseY) {
+    scene.tweens.add({
+      targets: slime,
+      y: baseY + 10,
+      duration: 700,
+      repeat: -1,
+      yoyo: true,
+      ease: 'Sine.easeInOut'
+    });
+  }
+
+  static createSlime(scene, x, y, operation, wave) {
+    const key  = SpriteManager._slimeKey(operation, wave);
+    const anim = SpriteManager._slimeAnim(operation, wave);
     const sp   = scene.add.sprite(x, y, key);
-    sp.setScale(2.0); // 32px × 2 = 64px display
+    // Scale down to fit: original 248px → ~80px display
+    sp.setScale(0.32);
+    sp.setFlipX(true);
     if (scene.anims.exists(anim)) sp.play(anim);
+    SpriteManager.addBounceToSlime(sp, scene, y);
+    return sp;
+  }
+
+  static createBossSlime(scene, x, y, variant) {
+    const keyMap = { purple: 'large_purple', red: 'large_red', grey: 'large_grey' };
+    const key = keyMap[variant] || 'large_purple';
+    const anim = key + '_anim';
+    const sp = scene.add.sprite(x, y, key);
+    sp.setScale(CONFIG.BOSS_SCALE);
+    sp.setFlipX(true);
+    if (scene.anims.exists(anim)) sp.play(anim);
+    SpriteManager.addBounceToSlime(sp, scene, y);
     return sp;
   }
 
@@ -141,24 +200,41 @@ class SpriteManager {
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
-  static _slimeKey(op) {
-    switch (op) {
-      case '+': return 'slime_green';
-      case '-': return 'slime_blue';
-      case '*': return 'slime_red';
-      case '/': return 'slime_white';
-      default:  return 'slime_green';
+  // Auto-detect frame size for a 1240×1860 slime sheet by testing common column grids.
+  // Tries 5→4→3→2 columns; returns the first whose rows also divide evenly.
+  static _detectSlimeFrameSize(sheetW, sheetH) {
+    for (const cols of [5, 4, 3, 2]) {
+      if (sheetW % cols !== 0) continue;
+      const fw = sheetW / cols;
+      // Assume a reasonable row count (typically 5-8 for these sheets) and find exact match
+      const rows = Math.round(sheetH / fw);
+      if (rows > 0 && sheetH % rows === 0) {
+        return { w: fw, h: sheetH / rows };
+      }
+    }
+    // Fallback: 5-column default (1240/5 = 248, 1860/5 = 372)
+    return { w: sheetW / 5, h: sheetH / 5 };
+  }
+
+  static _slimeKey(operation, wave) {
+    // Wave 3+ mid-wave slimes
+    if (wave >= 3) {
+      const mid = ['medium_blue', 'medium_orange', 'medium_yellow'];
+      const idx = ['+', '-', '*', '/'].indexOf(operation) % mid.length;
+      return mid[idx];
+    }
+    // Regular slimes by operation
+    switch (operation) {
+      case '+': return 'small_green';
+      case '-': return 'small_pink';
+      case '*': return 'small_violet';
+      case '/': return 'small_pink';
+      default:  return 'small_green';
     }
   }
 
-  static _slimeAnim(op) {
-    switch (op) {
-      case '+': return 'slime_green_anim';
-      case '-': return 'slime_blue_anim';
-      case '*': return 'slime_red_anim';
-      case '/': return 'slime_white_anim';
-      default:  return 'slime_green_anim';
-    }
+  static _slimeAnim(operation, wave) {
+    return SpriteManager._slimeKey(operation, wave) + '_anim';
   }
 
   // Generate small placeholder textures for non-sprited elements

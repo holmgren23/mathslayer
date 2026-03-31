@@ -3,7 +3,10 @@ class EnemyManager {
   constructor(scene, getQuestion) {
     this.scene       = scene;
     this.getQuestion = getQuestion || (() => ({ question:'?', answer:0, choices:[0,1,2,3], operation:'+' }));
-    this.activeSlimes = [];
+    this.getBossQuestion = () => null;
+    this.activeSlimes    = [];
+    this.bossSlime       = null;
+    this.bossSpawned     = false;
     this.currentSpeed          = CONFIG.SLIME_BASE_SPEED;
     this.maxSimultaneousSlimes = CONFIG.MAX_SLIMES_START;
     this.spawnInterval         = CONFIG.SPAWN_INTERVAL_BASE;
@@ -41,34 +44,86 @@ class EnemyManager {
 
   _spawnSlime() {
     if (this.activeSlimes.length >= this.maxSimultaneousSlimes) return;
+    if (this.bossSpawned) return; // pause regular spawns once boss is triggered (including entrance delay)
 
     const question = this.getQuestion();
     const op       = question ? question.operation : '+';
     const x        = CONFIG.GAME_WIDTH + 50;
-    const y        = CONFIG.GROUND_Y - 32;   // 32 = half of 64px display height
-    const slime    = SpriteManager.createSlime(this.scene, x, y, op);
+    const y        = CONFIG.GROUND_Y - 32;
+    const wave     = Math.floor(this.scene.correctAnswers / CONFIG.SLIMES_SCALE_THRESHOLD) + 1;
+    const slime    = SpriteManager.createSlime(this.scene, x, y, op, wave);
 
     slime.setData('alive',     true);
-    slime.setData('question',  question);  // full question object bound to this slime
+    slime.setData('question',  question);
     slime.setData('operation', op);
+    slime.setData('wave',      wave);
     slime.setDepth(10);
 
-    // Gentle idle bob tween
+    this.activeSlimes.push(slime);
+  }
+
+  spawnBoss(variant, getBossQuestion) {
+    if (this.bossSlime && this.bossSlime.getData('alive')) return;
+
+    const question = getBossQuestion ? getBossQuestion() : null;
+    const x        = CONFIG.GAME_WIDTH + 100;
+    const y        = CONFIG.GROUND_Y - 32;
+    const boss     = SpriteManager.createBossSlime(this.scene, x, y, variant);
+
+    // Fade in as boss walks on from the right edge naturally
+    boss.x = CONFIG.GAME_WIDTH + 120;
+    boss.alpha = 0;
     this.scene.tweens.add({
-      targets: slime,
-      y: y + 6,
-      duration: 620,
-      repeat: -1,
-      yoyo: true,
-      ease: 'Sine.easeInOut'
+      targets: boss,
+      alpha: 1,
+      duration: 600,
+      ease: 'Cubic.easeOut'
     });
 
-    this.activeSlimes.push(slime);
+    boss.setData('alive',    true);
+    boss.setData('question', question);
+    boss.setData('isBoss',   true);
+    boss.setData('hp',       CONFIG.BOSS_HP);
+    boss.setDepth(12);
+
+    this.bossSlime = boss;
+  }
+
+  damageBoss() {
+    if (!this.bossSlime || !this.bossSlime.getData('alive')) return false;
+    const hp = this.bossSlime.getData('hp') - 1;
+    this.bossSlime.setData('hp', hp);
+    return hp <= 0;
+  }
+
+  killBoss(onComplete) {
+    if (!this.bossSlime || !this.bossSlime.active) {
+      if (typeof onComplete === 'function') onComplete();
+      return;
+    }
+
+    this.scene.tweens.killTweensOf(this.bossSlime);
+    this.scene.tweens.add({
+      targets: this.bossSlime,
+      scaleX: 3.2,
+      scaleY: 3.2,
+      alpha: 0,
+      duration: 500,
+      ease: 'Power2',
+      onComplete: () => {
+        this.scene._emitKillParticles(this.bossSlime.x, this.bossSlime.y);
+        if (this.bossSlime && this.bossSlime.active) this.bossSlime.destroy();
+        this.bossSlime   = null;
+        this.bossSpawned = false; // allow next boss trigger after defeat
+        if (typeof onComplete === 'function') onComplete();
+      }
+    });
   }
 
   update(time, delta) {
     const moveAmount = this.currentSpeed * (delta / 1000);
 
+    // Update regular slimes
     for (let i = this.activeSlimes.length - 1; i >= 0; i--) {
       const slime = this.activeSlimes[i];
       if (!slime || !slime.active) {
@@ -81,10 +136,24 @@ class EnemyManager {
         this._onSlimeReachedPlayer(slime);
       }
     }
+
+    // Update boss (moves very slowly)
+    if (this.bossSlime && this.bossSlime.active && this.bossSlime.getData('alive')) {
+      const bossSpeed = CONFIG.BOSS_SPEED * (delta / 1000);
+      this.bossSlime.x -= bossSpeed;
+
+      if (this.bossSlime.x < CONFIG.PLAYER_X + 35) {
+        this._onBossReachedPlayer();
+      }
+    }
   }
 
   getActiveSlimes() {
     return this.activeSlimes.filter(s => s && s.active && s.getData('alive'));
+  }
+
+  getBossSlime() {
+    return this.bossSlime && this.bossSlime.active && this.bossSlime.getData('alive') ? this.bossSlime : null;
   }
 
   getSlimeCount() { return this.activeSlimes.length; }
@@ -145,7 +214,19 @@ class EnemyManager {
     if (slime.active) slime.destroy();
   }
 
+  _onBossReachedPlayer() {
+    if (!this.bossSlime || !this.bossSlime.getData('alive')) return;
+    this.scene.events.emit('bossReachedPlayer', this.bossSlime);
+  }
+
   onCorrectAnswers(totalCorrect) {
+    // Check for boss trigger
+    if (totalCorrect > 0 && totalCorrect % CONFIG.BOSS_TRIGGER === 0 && !this.bossSpawned) {
+      this.bossSpawned = true;
+      this.scene.events.emit('bossTriggered');
+      return;
+    }
+
     this.maxSimultaneousSlimes = Math.min(
       CONFIG.MAX_SLIMES_START + Math.floor(totalCorrect / CONFIG.SLIMES_SCALE_THRESHOLD),
       CONFIG.MAX_SLIMES_CAP
@@ -166,7 +247,13 @@ class EnemyManager {
       const s = this.activeSlimes[i];
       if (s && s.active) { this.scene.tweens.killTweensOf(s); s.destroy(); }
     }
-    this.activeSlimes          = [];
+    if (this.bossSlime && this.bossSlime.active) {
+      this.scene.tweens.killTweensOf(this.bossSlime);
+      this.bossSlime.destroy();
+    }
+    this.activeSlimes    = [];
+    this.bossSlime       = null;
+    this.bossSpawned     = false;
     this.currentSpeed          = CONFIG.SLIME_BASE_SPEED;
     this.maxSimultaneousSlimes = CONFIG.MAX_SLIMES_START;
     this.spawnInterval         = CONFIG.SPAWN_INTERVAL_BASE;
